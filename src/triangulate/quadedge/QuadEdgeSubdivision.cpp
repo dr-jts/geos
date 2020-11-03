@@ -134,7 +134,11 @@ std::cout << "Removing  " << &e << std::endl;
     // need to check base edge against both edge and sym, since either may be removed
     quadEdges.erase(
             std::remove_if(quadEdges.begin(), quadEdges.end(),
-                           [&e](QuadEdgeQuartet& es) { return &es.base() == &e; }),
+                           [e](QuadEdgeQuartet& es) { return &es.base() == &e; }),
+            quadEdges.end());
+    quadEdges.erase(
+            std::remove_if(quadEdges.begin(), quadEdges.end(),
+                           [e](QuadEdgeQuartet& es) { return &es.base() == &e.sym(); }),
             quadEdges.end());
     // rot edges do not need to be tested because they are not removed
 std::cout << "Removed  " << &e << " - size  " << sizeBefore << "->" << quadEdges.size() << std::endl;
