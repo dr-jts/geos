@@ -37,6 +37,8 @@ public:
         auto& qe = edges.back();
         qe.base().setOrig(o);
         qe.base().setDest(d);
+        qe.base().sym().setOrig(d);
+        qe.base().sym().setDest(o);
 
         return qe.base();
     }

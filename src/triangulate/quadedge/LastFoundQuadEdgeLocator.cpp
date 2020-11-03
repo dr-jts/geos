@@ -56,4 +56,3 @@ LastFoundQuadEdgeLocator::locate(const Vertex& v)
 } //namespace geos.triangulate.quadedge
 } //namespace geos.triangulate
 } //namespace goes
-

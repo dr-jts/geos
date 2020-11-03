@@ -44,6 +44,7 @@ IncrementalDelaunayTriangulator::insertSites(const VertexList& vertices)
 QuadEdge&
 IncrementalDelaunayTriangulator::insertSite(const Vertex& v)
 {
+std::cout << std::endl << "Inserting site " << v.getCoordinate() << std::endl;
     /*
      * This code is based on Guibas and Stolfi (1985), with minor modifications
      * and a bug fix from Dani Lischinski (Graphic Gems 1993). (The modification
@@ -64,7 +65,10 @@ IncrementalDelaunayTriangulator::insertSite(const Vertex& v)
     else if(subdiv->isOnEdge(*e, v.getCoordinate())) {
         // the point lies exactly on an edge, so delete the edge
         // (it will be replaced by a pair of edges which have the point as a vertex)
+std::cout << "Vertex on edge " << e << std::endl;
         e = &e->oPrev();
+std::cout << "oPrev " << e << std::endl;
+std::cout << "oNext " << &(e->oNext()) << std::endl;
         subdiv->remove(e->oNext());
     }
 
@@ -103,4 +107,3 @@ IncrementalDelaunayTriangulator::insertSite(const Vertex& v)
 
 } //namespace geos.triangulate
 } //namespace goes
-

@@ -127,12 +127,17 @@ QuadEdgeSubdivision::remove(QuadEdge& e)
 {
     QuadEdge::splice(e, e.oPrev());
     QuadEdge::splice(e.sym(), e.sym().oPrev());
+std::cout << "Removing  " << &e << std::endl;
 
     // this is inefficient but this should be called infrequently
+    int sizeBefore = quadEdges.size();
+    // need to check base edge against both edge and sym, since either may be removed
     quadEdges.erase(
             std::remove_if(quadEdges.begin(), quadEdges.end(),
                            [&e](QuadEdgeQuartet& es) { return &es.base() == &e; }),
             quadEdges.end());
+    // rot edges do not need to be tested because they are not removed
+std::cout << "Removed  " << &e << " - size  " << sizeBefore << "->" << quadEdges.size() << std::endl;
 
     //mark these edges as removed
     e.remove();
@@ -151,6 +156,8 @@ QuadEdgeSubdivision::locateFromEdge(const Vertex& v,
     QuadEdge* e = startingEdges[0];
 
     for(;;) {
+std::cout << "Locate: testing edge:   " << e << std::endl;
+
         ++iter;
         /*
          * So far it has always been the case that failure to locate indicates an

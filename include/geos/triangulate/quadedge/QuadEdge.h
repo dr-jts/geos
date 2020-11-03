@@ -21,6 +21,8 @@
 #define GEOS_TRIANGULATE_QUADEDGE_QUADEDGE_H
 
 #include <memory>
+#include <string>
+#include <iostream>
 
 #include <geos/triangulate/quadedge/Vertex.h>
 #include <geos/geom/LineSegment.h>
@@ -434,7 +436,11 @@ public:
      * @return a LineSegment
      */
     std::unique_ptr<geom::LineSegment> toLineSegment() const;
+
+    /// Output function
 };
+
+GEOS_DLL std::ostream& operator<< (std::ostream& os, const QuadEdge* e);
 
 
 } //namespace geos.triangulate.quadedge
@@ -442,4 +448,3 @@ public:
 } //namespace geos
 
 #endif //GEOS_TRIANGULATE_QUADEDGE_QUADEDGE_H
-
