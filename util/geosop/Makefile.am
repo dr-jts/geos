@@ -11,6 +11,8 @@ noinst_PROGRAMS = \
 GeosOp_SOURCES = \
 	GeosOp.cpp \
 	GeosOp.h \
+	WKBStreamReader.cpp \
+	WKBStreamReader.h \
 	WKTStreamReader.cpp \
 	WKTStreamReader.h
 

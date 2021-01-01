@@ -78,15 +78,14 @@ private:
 
     GeosOpArgs& args;
 
-    int geomCount;
-    int coordCount;
+    int opCount;
 
     std::vector<std::unique_ptr<Geometry>> geomA;
+    std::string statsA;
 
-    std::vector<std::unique_ptr<Geometry>> load(std::string src, int limit);
-    std::vector<std::unique_ptr<Geometry>> loadFile(std::string src, int limit);
+    std::vector<std::unique_ptr<Geometry>> readInput(std::string name, std::string src, int limit);
     void execute();
-    Result* execOp(std::string op, const  std::unique_ptr<Geometry>& geom);
+    Result* executeOp(std::string op, const  std::unique_ptr<Geometry>& geom);
     void output(Result* result);
 
 };

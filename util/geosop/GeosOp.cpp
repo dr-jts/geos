@@ -18,12 +18,14 @@
 #include <geos/geom/GeometryFactory.h>
 #include <geos/operation/valid/MakeValid.h>
 #include <geos/io/WKTReader.h>
+#include <geos/io/WKBReader.h>
 
 #include <fstream>
 #include <iostream>
 #include <sstream>
 
 #include "WKTStreamReader.h"
+#include "WKBStreamReader.h"
 #include "GeosOp.h"
 #include "cxxopts.hpp"
 
@@ -40,7 +42,6 @@ std::string const GeosOp::opNames[] = {
     "interiorPoint",
     "isValid",
     "length",
-    "makeValid",
     "union",
 };
 
@@ -85,7 +86,7 @@ int main(int argc, char** argv) {
 
     if (result.count("format")) {
         auto fmt = result["format"].as<std::string>();
-        if (fmt == "txt") {
+        if (fmt == "txt" || fmt == "wkt" ) {
             cmdArgs.format = GeosOpArgs::fmtText;
         }
         else if (fmt == "wkb") {
@@ -122,16 +123,28 @@ GeosOp::GeosOp(GeosOpArgs& arg)
 GeosOp::~GeosOp() {
 }
 
-/*
-std::vector<std::unique_ptr<Geometry>> collect( std::vector<std::unique_ptr<Geometry>>& geoms ) {
-    auto gf = GeometryFactory::create();
-    auto gc = gf->createGeometryCollection( std::move(geoms) );
-    std::vector<std::unique_ptr<Geometry>> geomsColl;
-    geomsColl.push_back( std::move( gc ) );
-    return geomsColl;
+std::string timeFormatted(int n)
+{
+    auto fmt = std::to_string(n);
+    int insertPosition = static_cast<int>(fmt.length()) - 3;
+    while (insertPosition > 0) {
+        fmt.insert(insertPosition, ",");
+        insertPosition-=3;
+    }
+    return fmt + " usec";
 }
-*/
-std::vector<std::unique_ptr<Geometry>> collect( std::vector<std::unique_ptr<Geometry>>& geoms ) {
+
+static bool startsWith(const std::string& s, const std::string& prefix) {
+    return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
+}
+
+static bool endsWith(const std::string& str, const std::string& suffix)
+{
+    return str.size() >= suffix.size() && 0 == str.compare(str.size()-suffix.size(), suffix.size(), suffix);
+}
+
+std::vector<std::unique_ptr<Geometry>>
+collect( std::vector<std::unique_ptr<Geometry>>& geoms ) {
 
     std::vector<Geometry*> geomsCopy;
     for (int i = 0; i < geoms.size(); i++) {
@@ -146,14 +159,135 @@ std::vector<std::unique_ptr<Geometry>> collect( std::vector<std::unique_ptr<Geom
     return geomsColl;
 }
 
+bool isWKTLiteral(std::string s) {
+    // TODO: fix this to handle e.g. POLYGON EMPTY
+
+    // assume if string contains a ( it is WKT
+    int numLParen = std::count(s.begin(), s.end(), '(');
+    return numLParen > 0;
+}
+
+bool isWKBLiteral(std::string s) {
+    // assume WKB if only chars are [0-9] and [a-fA-F]
+    const std::string hexChars = "0123456789abcdefABCDEF";
+    return s.find_first_not_of(hexChars) == std::string::npos;
+}
+
+std::vector<std::unique_ptr<Geometry>>
+readWKTFile(std::istream& in, int limit) {
+
+    WKTStreamReader rdr( in );
+    std::vector<std::unique_ptr<Geometry>> geoms;
+    int count = 0;
+    while (limit < 0 || count < limit) {
+        auto geom = rdr.next();
+        if (geom == nullptr)
+            break;
+        geoms.push_back( std::unique_ptr<Geometry>(geom) );
+        count++;
+    }
+    return geoms;
+}
+
+std::vector<std::unique_ptr<Geometry>>
+readWKTFile(std::string src, int limit) {
+    if (src == "-" || src == "-.wkt" || src == "stdin" || src == "stdin.wkt") {
+        return readWKTFile( std::cin, limit );
+    }
+    std::ifstream f( src );
+    auto geoms = readWKTFile( f, limit );
+    f.close();
+    return geoms;
+}
+
+std::vector<std::unique_ptr<Geometry>>
+readWKBFile(std::istream& in, int limit) {
+    WKBStreamReader rdr( in );
+    std::vector<std::unique_ptr<Geometry>> geoms;
+    int count = 0;
+    while (limit < 0 || count < limit) {
+        auto geom = rdr.next();
+        if (geom == nullptr)
+            break;
+        geoms.push_back( std::unique_ptr<Geometry>(geom) );
+        count++;
+    }
+    return geoms;
+}
+
+std::vector<std::unique_ptr<Geometry>>
+readWKBFile(std::string src, int limit) {
+    if (src == "-.wkb" || "stdin.wkb" ) {
+        return readWKBFile( std::cin, limit );
+    }
+    std::ifstream f( src );
+    auto geoms = readWKBFile( f, limit );
+    f.close();
+    return geoms;
+}
+
+std::vector<std::unique_ptr<Geometry>>
+GeosOp::readInput(std::string name, std::string src, int limit) {
+    std::vector<std::unique_ptr<Geometry>> geoms;
+    std::string srcDesc;
+    if ( isWKTLiteral(src) ) {
+        srcDesc = ": WKT literal";
+
+        geos::io::WKTReader rdr;
+        auto geom = rdr.read( src );
+        geoms.push_back( std::unique_ptr<Geometry>(geom) );
+    }
+    else if ( isWKBLiteral(src) ) {
+        srcDesc = "WKB literal";
+
+        geos::io::WKBReader rdr;
+        std::istringstream hex(src);
+        auto geom = rdr.readHEX( hex );
+        geoms.push_back( std::unique_ptr<Geometry>(geom) );
+    }
+    else if (endsWith(src, ".wkb")) {
+        srcDesc = "WKB file " + src;
+        geoms = readWKBFile( src, limit );
+    }
+    else {
+        srcDesc = "WKT file " + src;
+        geoms = readWKTFile( src, limit );
+    }
+    if (args.isVerbose) {
+        std::cout << "Input " << name << ": " << srcDesc << std::endl;
+    }
+    return geoms;
+}
+
+std::string geomStats(int geomCount, int geomVertices) {
+    return std::to_string(geomCount) + " geometries, "
+        + std::to_string(geomVertices) + " vertices";
+
+}
+std::string summaryStats(std::vector<std::unique_ptr<Geometry>>& geoms) {
+    int geomCount = 0;
+    int geomPts = 0;
+    for (const  auto& geom : geoms) {
+        geomCount++;
+        geomPts += geom->getNumPoints();
+    }
+    return geomStats(geomCount, geomPts);
+}
+
 void GeosOp::run() {
 
     initGEOS(nullptr, nullptr);
 
+    geos::util::Profile sw("read");
+    sw.start();
+    auto geomsLoad = readInput( "A", args.srcA, args.limitA );
+    statsA = summaryStats(geomsLoad);
+    sw.stop();
     if (args.isVerbose) {
-        std::cout << "Input A:" << args.srcA << std::endl;
+        std::cout << "Read " << statsA
+        << "  -- " << timeFormatted( sw.getTot() )
+        << std::endl;
     }
-    auto geomsLoad = load( args.srcA, args.limitA );
 
     //--- collect input into single geometry collection if specified
     if (args.isCollect && geomsLoad.size() > 1) {
@@ -166,41 +300,6 @@ void GeosOp::run() {
     execute();
 }
 
-bool isWKTLiteral(std::string s) {
-    // TODO: fix this to handle e.g. POLYGON EMPTY
-
-    // assume if string contains a ( it is WKT
-    int numLParen = std::count(s.begin(), s.end(), '(');
-    return numLParen > 0;
-}
-
-std::vector<std::unique_ptr<Geometry>> GeosOp::load(std::string src, int limit) {
-    if ( isWKTLiteral(src) ) {
-        std::vector<std::unique_ptr<Geometry>> geoms;
-        geos::io::WKTReader rdr;
-        auto geom = rdr.read( src );
-        geoms.push_back( std::unique_ptr<Geometry>(geom) );
-        return geoms;
-    }
-    return loadFile( src, limit );
-}
-
-std::vector<std::unique_ptr<Geometry>> GeosOp::loadFile(std::string src, int limit) {
-    std::ifstream f( src );
-    WKTStreamReader rdr( f );
-    std::vector<std::unique_ptr<Geometry>> geoms;
-    int count = 0;
-    while (limit < 0 || count < limit) {
-        auto geom = rdr.next();
-        if (geom == nullptr)
-            break;
-        geoms.push_back( std::unique_ptr<Geometry>(geom) );
-        count++;
-    }
-    f.close();
-    return geoms;
-}
-
 void GeosOp::execute() {
     std::string op = args.opName;
 
@@ -210,11 +309,8 @@ void GeosOp::execute() {
     sw.start();
 
     for (const auto& geom : geomA) {
-        //---- gather stats
-        geomCount++;
-        coordCount += geom->getNumPoints();
-
-        Result* result = execOp(op, geom);
+        opCount++;
+        Result* result = executeOp(op, geom);
 
         output(result);
         delete result;
@@ -222,9 +318,9 @@ void GeosOp::execute() {
 
     sw.stop();
     if (args.isShowTime || args.isVerbose) {
-        std::cout << sw.getTot()
-            << "  -- " << geomCount << " geometries, "
-            << coordCount << " vertices"
+        std::cout
+            << "Processed " <<  statsA
+            << "  -- " << timeFormatted( sw.getTot() )
             << std::endl;
     }
 }
@@ -246,7 +342,10 @@ void GeosOp::output(Result* result) {
 //TODO: reify operations into GeomOp classes (or instances with a function pointer?)
 // This allows pre-checking op existence, and providing metadata about ops (name, description)
 
-Result* GeosOp::execOp(std::string op, const std::unique_ptr<Geometry>& geom) {
+Result* GeosOp::executeOp(std::string op, const std::unique_ptr<Geometry>& geom) {
+
+    geos::util::Profile sw( op );
+    sw.start();
 
     Result* result;
     if (op == "" || op == "no-op") {
@@ -269,8 +368,6 @@ Result* GeosOp::execOp(std::string op, const std::unique_ptr<Geometry>& geom) {
          result = new Result( geom->isValid() );
     } else if (op == "length") {
         result = new Result( geom->getLength() );
-//    } else if (op == "makeValid") {
-//        result = new Result( geos::operation::valid::MakeValid().build( geom.get() ) );
      } else if (op == "union") {
         result = new Result( geom->Union() );
     } else {
@@ -278,9 +375,13 @@ Result* GeosOp::execOp(std::string op, const std::unique_ptr<Geometry>& geom) {
         exit(1);
     }
     if (args.isVerbose) {
-        std::cout << args.opName << ": "
+        sw.stop();
+        std::cout
+            << "[ " << opCount << "] "
+            << args.opName << ": "
             << geom->getGeometryType() << "( " << geom->getNumPoints() << " )"
-            << " --> " << result->metadata()
+            << " -> " << result->metadata()
+            << "  --  " << timeFormatted( sw.getTot() )
             << std::endl;
     }
 
