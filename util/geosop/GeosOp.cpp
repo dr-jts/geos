@@ -15,6 +15,8 @@
 #include <geos/profiler.h>
 #include <geos_c.h>
 
+#include <geos/geom/Geometry.h>
+#include <geos/geom/Point.h>
 #include <geos/geom/GeometryFactory.h>
 #include <geos/operation/valid/MakeValid.h>
 #include <geos/io/WKTReader.h>
@@ -217,7 +219,7 @@ readWKBFile(std::istream& in, int limit) {
 
 std::vector<std::unique_ptr<Geometry>>
 readWKBFile(std::string src, int limit) {
-    if (src == "-.wkb" || "stdin.wkb" ) {
+    if (src == "-.wkb" || src == "stdin.wkb" ) {
         return readWKBFile( std::cin, limit );
     }
     std::ifstream f( src );
@@ -226,19 +228,25 @@ readWKBFile(std::string src, int limit) {
     return geoms;
 }
 
+void GeosOp::log(std::string s) {
+    if (args.isVerbose) {
+        std::cout << s << std::endl;
+    }
+}
+
 std::vector<std::unique_ptr<Geometry>>
 GeosOp::readInput(std::string name, std::string src, int limit) {
     std::vector<std::unique_ptr<Geometry>> geoms;
-    std::string srcDesc;
+    std::string srcDesc = "Input " + name + ": ";
     if ( isWKTLiteral(src) ) {
-        srcDesc = ": WKT literal";
+        log(srcDesc + "WKT literal");
 
         geos::io::WKTReader rdr;
         auto geom = rdr.read( src );
         geoms.push_back( std::unique_ptr<Geometry>(geom) );
     }
     else if ( isWKBLiteral(src) ) {
-        srcDesc = "WKB literal";
+        log(srcDesc + "WKB literal");
 
         geos::io::WKBReader rdr;
         std::istringstream hex(src);
@@ -246,15 +254,12 @@ GeosOp::readInput(std::string name, std::string src, int limit) {
         geoms.push_back( std::unique_ptr<Geometry>(geom) );
     }
     else if (endsWith(src, ".wkb")) {
-        srcDesc = "WKB file " + src;
+        log(srcDesc + "WKB file " + src);
         geoms = readWKBFile( src, limit );
     }
     else {
-        srcDesc = "WKT file " + src;
+        log(srcDesc + "WKT file " + src);
         geoms = readWKTFile( src, limit );
-    }
-    if (args.isVerbose) {
-        std::cout << "Input " << name << ": " << srcDesc << std::endl;
     }
     return geoms;
 }
@@ -408,6 +413,14 @@ Result::Result(double val)
     typeCode = typeDouble;
 }
 
+Result::Result(Geometry * val)
+{
+//std::cout << "Result Geometry +" << std::endl;
+//std::cout << val->getGeometryType() << std::endl;
+    valGeom = std::unique_ptr<Geometry>(val);
+    typeCode = typeGeometry;
+}
+
 Result::Result(std::unique_ptr<geom::Geometry> val)
 {
     valGeom = std::move(val);
@@ -440,13 +453,14 @@ Result::toString() {
         return converter.str();
 
     case typeGeometry:
+				if (valGeom == nullptr)
+					return "null";
         return valGeom->toString();
     }
 }
 
 std::string
 Result::metadata() {
-    std::stringstream converter;
     switch (typeCode) {
     case typeBool:
         return "bool";
@@ -458,6 +472,8 @@ Result::metadata() {
         return "double";
 
     case typeGeometry:
+				if (valGeom == nullptr)
+					return "null";
         return valGeom->getGeometryType() + "( " + std::to_string( valGeom->getNumPoints() ) + " )";
     }
 }

@@ -31,7 +31,8 @@ public:
     Result(bool val);
     Result(int val);
     Result(double val);
-    Result(std::unique_ptr<Geometry> val);
+    Result(Geometry * val);
+		Result(std::unique_ptr<Geometry> val);
     ~Result();
 
     bool isGeometry();
@@ -40,7 +41,7 @@ public:
 
 private:
     enum {
-        typeBool, typeInt, typeDouble, typeGeometry
+        typeBool = 1, typeInt, typeDouble, typeGeometry
     } typeCode;
 };
 
@@ -78,7 +79,7 @@ private:
 
     GeosOpArgs& args;
 
-    int opCount;
+    int opCount = 0;
 
     std::vector<std::unique_ptr<Geometry>> geomA;
     std::string statsA;
@@ -87,7 +88,7 @@ private:
     void execute();
     Result* executeOp(std::string op, const  std::unique_ptr<Geometry>& geom);
     void output(Result* result);
-
+    void log(std::string s);
 };
 
 #endif // GEOS_GEOSOP_H
