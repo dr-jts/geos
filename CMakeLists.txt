@@ -347,6 +347,7 @@ add_subdirectory(src)
 add_subdirectory(capi)
 add_subdirectory(tests)
 add_subdirectory(tools)
+add_subdirectory(util)
 
 #################################################################################
 # Install/Uninstall
