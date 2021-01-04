@@ -11,6 +11,7 @@
 
 add_executable(geosop
   GeosOp.cpp
+  GeomFunction.cpp
   WKBStreamReader.cpp
   WKTStreamReader.cpp )
 

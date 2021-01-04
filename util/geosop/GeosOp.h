@@ -3,7 +3,7 @@
  * GEOS - Geometry Engine Open Source
  * http://geos.osgeo.org
  *
- * Copyright (C) 2005 Refractions Research Inc.
+ * Copyright (C) 2020 Martin Davis
  *
  * This is free software; you can redistribute and/or modify it under
  * the terms of the GNU Lesser General Public Licence as published
@@ -21,29 +21,6 @@
 using namespace geos;
 using namespace geos::geom;
 
-class Result {
-public:
-    bool valBool;
-    int valInt;
-    double valDouble;
-    std::unique_ptr<Geometry> valGeom;
-
-    Result(bool val);
-    Result(int val);
-    Result(double val);
-    Result(Geometry * val);
-		Result(std::unique_ptr<Geometry> val);
-    ~Result();
-
-    bool isGeometry();
-    std::string metadata();
-    std::string toString();
-
-private:
-    enum {
-        typeBool = 1, typeInt, typeDouble, typeGeometry
-    } typeCode;
-};
 
 class GeosOpArgs {
 
@@ -60,6 +37,9 @@ public:
     std::string srcA;
     int limitA = -1;
     bool isCollect = true;
+    bool isExplode = false;
+
+    std::string srcB;
 
     std::string opName;
     double opArg1 = 0.0;
@@ -80,14 +60,24 @@ private:
     GeosOpArgs& args;
 
     int opCount = 0;
+    int vertexCount = 0;
+    double totalTime = 0;
 
     std::vector<std::unique_ptr<Geometry>> geomA;
-    std::string statsA;
+
+    std::vector<std::unique_ptr<Geometry>> geomB;
 
     std::vector<std::unique_ptr<Geometry>> readInput(std::string name, std::string src, int limit);
+    std::vector<std::unique_ptr<Geometry>> loadInput(std::string name, std::string src, int limit);
     void execute();
-    Result* executeOp(std::string op, const  std::unique_ptr<Geometry>& geom);
+    void executeUnary(GeomFunction * fun);
+    void executeBinary(GeomFunction * fun);
+    Result* executeOp(GeomFunction * fun,
+        int indexA, const  std::unique_ptr<Geometry>& geomA,
+        int indexB, const  std::unique_ptr<Geometry>& geomB);
     void output(Result* result);
+    void outputExplode(std::unique_ptr<Geometry>& geom);
+    void outputGeometry( const Geometry* geom);
     void log(std::string s);
 };
 

@@ -28,6 +28,7 @@
 
 #include "WKTStreamReader.h"
 #include "WKBStreamReader.h"
+#include "GeomFunction.h"
 #include "GeosOp.h"
 #include "cxxopts.hpp"
 
@@ -44,6 +45,7 @@ std::string const GeosOp::opNames[] = {
     "interiorPoint",
     "isValid",
     "length",
+    "makeValid",
     "union",
 };
 
@@ -55,13 +57,17 @@ void showHelp() {
 }
 
 int main(int argc, char** argv) {
+    GeomFunction::init();
+
     GeosOpArgs cmdArgs;
 
     cxxopts::Options options("geosop", "Executes GEOS geometry operations");
     options.add_options()
-        ("a", "source for A geometries", cxxopts::value<std::string>( cmdArgs.srcA ))
-        ("alimit", "limit on A geometries", cxxopts::value<int>( cmdArgs.limitA ))
+        ("a", "source for A geometries (WKT, WKB, file, stdin, stdin.wkb)", cxxopts::value<std::string>( cmdArgs.srcA ))
+        ("b", "source for B geometries (WKT, WKB, file, stdin, stdin.wkb)", cxxopts::value<std::string>( cmdArgs.srcB ))
+        ("alimit", "Limit nunber of A geometries read", cxxopts::value<int>( cmdArgs.limitA ))
         ("c,collect", "Collect input into single geometry", cxxopts::value<bool>( cmdArgs.isCollect ))
+        ("e,explode", "Explode result", cxxopts::value<bool>( cmdArgs.isExplode))
         ("f,format", "Output format", cxxopts::value<std::string>( ))
         ("h,help", "Print help")
         ("t,time", "Print execution time", cxxopts::value<bool>( cmdArgs.isShowTime ) )
@@ -74,14 +80,19 @@ int main(int argc, char** argv) {
     options.parse_positional({"opName", "opArgs"});
     auto result = options.parse(argc, argv);
 
-    if (argc == 0 || result.count("help")) {
+    if (argc <= 1 || result.count("help")) {
+        if (result.count("help")) {
+            std::cout << "geosop - GEOS v. " << geosversion() << std::endl;
+        }
         std::cout << options.help() << std::endl;
         //showHelp();
         if (result.count("help")) {
             std::cout << "Operations:" << std::endl;
-            for (auto opName : GeosOp::opNames) {
+            std::vector<std::string> ops = GeomFunction::list();
+            for (auto opName : ops) {
                std::cout << "  " << opName << std::endl;
             }
+
         }
         return 0;
     }
@@ -112,7 +123,6 @@ int main(int argc, char** argv) {
             cmdArgs.opArg1 = std::stod(val);
         }
     }
-
     GeosOp geosop(cmdArgs);
     geosop.run();
 }
@@ -162,7 +172,8 @@ collect( std::vector<std::unique_ptr<Geometry>>& geoms ) {
 }
 
 bool isWKTLiteral(std::string s) {
-    // TODO: fix this to handle e.g. POLYGON EMPTY
+    // check for empty geoms (which do not have parens)
+    if (endsWith(s, " EMPTY")) return true;
 
     // assume if string contains a ( it is WKT
     int numLParen = std::count(s.begin(), s.end(), '(');
@@ -232,6 +243,7 @@ void GeosOp::log(std::string s) {
     if (args.isVerbose) {
         std::cout << s << std::endl;
     }
+
 }
 
 std::vector<std::unique_ptr<Geometry>>
@@ -279,55 +291,137 @@ std::string summaryStats(std::vector<std::unique_ptr<Geometry>>& geoms) {
     return geomStats(geomCount, geomPts);
 }
 
+std::vector<std::unique_ptr<Geometry>>
+GeosOp::loadInput(std::string name, std::string src, int limit) {
+    if (src.length() == 0) {
+        std::vector<std::unique_ptr<Geometry>> geoms;
+        return geoms;
+    }
+    geos::util::Profile sw( "Read" );
+    sw.start();
+    auto geoms = readInput( name, src, limit );
+    sw.stop();
+    auto stats = summaryStats(geoms);
+    log("Read " + stats  + "  -- " + timeFormatted( sw.getTot() ));
+    return geoms;
+}
+
 void GeosOp::run() {
 
     initGEOS(nullptr, nullptr);
 
-    geos::util::Profile sw("read");
-    sw.start();
-    auto geomsLoad = readInput( "A", args.srcA, args.limitA );
-    statsA = summaryStats(geomsLoad);
-    sw.stop();
-    if (args.isVerbose) {
-        std::cout << "Read " << statsA
-        << "  -- " << timeFormatted( sw.getTot() )
-        << std::endl;
-    }
+    auto geomsLoadA = loadInput("A", args.srcA, args.limitA);
 
     //--- collect input into single geometry collection if specified
-    if (args.isCollect && geomsLoad.size() > 1) {
-        geomA = collect( geomsLoad );
+    if (args.isCollect && geomsLoadA.size() > 1) {
+        geomA = collect( geomsLoadA );
     }
     else {
-        geomA = std::move(geomsLoad);
+        geomA = std::move(geomsLoadA);
     }
 
+    geomB = loadInput("B", args.srcB, -1);
+
+    //------------------------
+
     execute();
+
+    if (args.isShowTime || args.isVerbose) {
+        std::cout
+            << "Processed " <<  opCount << " operations ( "
+            << vertexCount << " vertices)"
+            << "  -- " << timeFormatted( totalTime )
+            << std::endl;
+    }
 }
 
 void GeosOp::execute() {
     std::string op = args.opName;
 
-    //std::cout << "DEBUG Format: " << args.format << std::endl;
+    GeomFunction * fun;
+    if (op == "" || op == "no-op") {
+        op = "copy";
+    }
+    fun = GeomFunction::find(op);
+
+    if (fun == nullptr) {
+        std::cerr << "Unknown operation: " << op << std::endl;
+        exit(1);
+    }
 
     geos::util::Profile sw( op );
     sw.start();
 
-    for (const auto& geom : geomA) {
+    if (fun->isBinary()) {
+        executeBinary(fun);
+    }
+    else {
+        executeUnary(fun);
+    }
+
+    sw.stop();
+    totalTime = sw.getTot();
+}
+
+void GeosOp::executeUnary(GeomFunction * fun) {
+    for (unsigned i = 0; i < geomA.size(); i++) {
         opCount++;
-        Result* result = executeOp(op, geom);
+        vertexCount += geomA[i]->getNumPoints();
+        Result* result = executeOp(fun, i, geomA[i], 0, nullptr);
 
         output(result);
         delete result;
     }
+}
 
-    sw.stop();
-    if (args.isShowTime || args.isVerbose) {
-        std::cout
-            << "Processed " <<  statsA
-            << "  -- " << timeFormatted( sw.getTot() )
-            << std::endl;
+void GeosOp::executeBinary(GeomFunction * fun) {
+    for (unsigned ia = 0; ia < geomA.size(); ia++) {
+        for (unsigned ib = 0; ib < geomB.size(); ib++) {
+            opCount++;
+            vertexCount += geomA[ia]->getNumPoints();
+            vertexCount += geomB[ib]->getNumPoints();
+            Result* result = executeOp(fun, ia, geomA[ia], ib, geomB[ib]);
+
+            output(result);
+            delete result;
+        }
     }
+}
+
+std::string inputDesc(std::string name, int index, const std::unique_ptr<Geometry>& geom)
+{
+    if (geom == nullptr) {
+        return "";
+    }
+    std::string desc = name + "[" + std::to_string(index+1) + "] " + geom->getGeometryType()
+        + "( " + std::to_string(geom->getNumPoints()) + " )";
+    return desc;
+}
+
+Result* GeosOp::executeOp(GeomFunction * fun,
+    int indexA,
+    const std::unique_ptr<Geometry>& geomA,
+    int indexB,
+    const std::unique_ptr<Geometry>& geomB) {
+
+    geos::util::Profile sw( "op" );
+    sw.start();
+
+    Result* result = fun->execute( geomA, geomB, args.opArg1  );
+    sw.stop();
+
+    // avoid cost of logging if not verbose
+    if (args.isVerbose) {
+        log(
+            "[ " + std::to_string(opCount) + "] " + fun->name() + ": "
+            + inputDesc("A", indexA, geomA) + " "
+            + inputDesc("B", indexB, geomB)
+            + " -> " + result->metadata()
+            + "  --  " + timeFormatted( sw.getTot() )
+        );
+    }
+
+    return result;
 }
 
 void GeosOp::output(Result* result) {
@@ -335,8 +429,13 @@ void GeosOp::output(Result* result) {
     if (args.format == GeosOpArgs::fmtNone )
         return;
 
-    if (result->isGeometry() && args.format == GeosOpArgs::fmtWKB ) {
-        std::cout << *(result->valGeom) << std::endl;
+    if (result->isGeometry() ) {
+        if (args.isExplode) {
+            outputExplode( result->valGeom );
+        }
+        else {
+            outputGeometry( result->valGeom.get() );
+        }
     }
     else {
         // output as text/WKT
@@ -344,136 +443,24 @@ void GeosOp::output(Result* result) {
     }
 }
 
-//TODO: reify operations into GeomOp classes (or instances with a function pointer?)
-// This allows pre-checking op existence, and providing metadata about ops (name, description)
-
-Result* GeosOp::executeOp(std::string op, const std::unique_ptr<Geometry>& geom) {
-
-    geos::util::Profile sw( op );
-    sw.start();
-
-    Result* result;
-    if (op == "" || op == "no-op") {
-        result = new Result( geom->clone() );
-    } else if (op == "area") {
-        result = new Result( geom->getArea() );
-    } else if (op == "boundary") {
-        result = new Result( geom->getBoundary() );
-    } else if (op == "buffer") {
-        result = new Result( geom->buffer( args.opArg1 ) );
-    } else if (op == "convexHull") {
-        result = new Result( geom->convexHull() );
-    } else if (op == "centroid") {
-        result = new Result( geom->getCentroid() );
-    } else if (op == "envelope") {
-        result = new Result( geom->getEnvelope() );
-    } else if (op == "interiorPoint") {
-        result = new Result( geom->getInteriorPoint() );
-    } else if (op == "isValid") {
-         result = new Result( geom->isValid() );
-    } else if (op == "length") {
-        result = new Result( geom->getLength() );
-     } else if (op == "union") {
-        result = new Result( geom->Union() );
-    } else {
-        std::cerr << "Unknown operation: " << op << std::endl;
-        exit(1);
-    }
-    if (args.isVerbose) {
-        sw.stop();
-        std::cout
-            << "[ " << opCount << "] "
-            << args.opName << ": "
-            << geom->getGeometryType() << "( " << geom->getNumPoints() << " )"
-            << " -> " << result->metadata()
-            << "  --  " << timeFormatted( sw.getTot() )
-            << std::endl;
-    }
-
-    return result;
-}
-
-//===============================================
-
-Result::Result(bool val)
-{
-    valBool = val;
-    typeCode = typeBool;
-}
-
-Result::Result(int  val)
-{
-    valInt = val;
-    typeCode = typeInt;
-}
-
-Result::Result(double val)
-{
-    valDouble = val;
-    typeCode = typeDouble;
-}
-
-Result::Result(Geometry * val)
-{
-//std::cout << "Result Geometry +" << std::endl;
-//std::cout << val->getGeometryType() << std::endl;
-    valGeom = std::unique_ptr<Geometry>(val);
-    typeCode = typeGeometry;
-}
-
-Result::Result(std::unique_ptr<geom::Geometry> val)
-{
-    valGeom = std::move(val);
-    typeCode = typeGeometry;
-}
-
-Result::~Result()
-{
-}
-
-bool
-Result::isGeometry() {
-    return typeCode == typeGeometry;
-}
-
-std::string
-Result::toString() {
-    std::stringstream converter;
-    switch (typeCode) {
-    case typeBool:
-        converter << std::boolalpha << valBool;
-        return converter.str();
-
-    case typeInt:
-        converter << valInt;
-        return converter.str();
-
-    case typeDouble:
-        converter << valDouble;
-        return converter.str();
-
-    case typeGeometry:
-				if (valGeom == nullptr)
-					return "null";
-        return valGeom->toString();
+void GeosOp::outputExplode(std::unique_ptr<Geometry>& geom) {
+    for (int i = 0; i < geom->getNumGeometries(); i++) {
+        auto g = geom->getGeometryN(i);
+        outputGeometry( g );
     }
 }
 
-std::string
-Result::metadata() {
-    switch (typeCode) {
-    case typeBool:
-        return "bool";
+void GeosOp::outputGeometry(const Geometry * geom) {
+    if (geom == nullptr) {
+        std::cout << "null" << std::endl;
+        return;
+    }
 
-    case typeInt:
-        return "int";
-
-    case typeDouble:
-        return "double";
-
-    case typeGeometry:
-				if (valGeom == nullptr)
-					return "null";
-        return valGeom->getGeometryType() + "( " + std::to_string( valGeom->getNumPoints() ) + " )";
+    if (args.format == GeosOpArgs::fmtWKB ) {
+        std::cout << *(geom) << std::endl;
+    }
+    else {
+        // output as text/WKT
+        std::cout << geom->toString() << std::endl;
     }
 }
